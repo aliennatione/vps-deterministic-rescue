@@ -1,0 +1,4 @@
+mount_point: /mnt/vps
+target_partition: /dev/sda1
+# Aggiorna dopo l'analisi dei log:
+service_to_disable: docker.service
