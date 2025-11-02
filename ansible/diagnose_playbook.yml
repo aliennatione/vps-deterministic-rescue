@@ -71,6 +71,14 @@
         dest: "{{ local_download_dir }}/"
         flat: yes
       register: fetch_result
+    
+    - name: Ensure local log directory exists
+      ansible.builtin.file:
+        path: "{{ local_download_dir }}/{{ log_dir_name }}"
+        state: directory
+        mode: '0700'
+      delegate_to: localhost
+      become: false # Cruciale per evitare il prompt sudo locale
 
     - name: Extract log archive on Control Node
       ansible.builtin.unarchive:
