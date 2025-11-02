@@ -24,7 +24,6 @@
         path: "{{ mount_point }}"
         src: "{{ target_partition }}"
         fstype: auto
-        # Montaggio in sola lettura
         opts: ro
         state: mounted
 
@@ -33,40 +32,30 @@
         path: "{{ log_dest }}"
         state: directory
         mode: '0755'
-    
-    # --- TASK DI ANALISI AVANZATA (Journal + Stato Disco) ---
+
+    - name: Copy target system's recent syslog (Robust copy using shell)
+      ansible.builtin.shell: cp "{{ mount_point }}/var/log/syslog" "{{ log_dest }}/target_syslog_copy" || true
+      ignore_errors: yes
 
     - name: Run complex diagnostic steps (Journal, Disk Check, Bind Mounts)
       ansible.builtin.shell: |
-        # Attiva la modalità resiliente: set +e
         set +e
-
-        # 1. Preparazione dell'ambiente chroot
-        # Il kernel ha bisogno di /proc e /sys per journalctl e df
         mkdir -p "{{ mount_point }}/proc" "{{ mount_point }}/sys"
         mount -o bind /proc "{{ mount_point }}/proc"
         mount -o bind /sys "{{ mount_point }}/sys"
-
-        # 2. Acquisizione Log Journal (Ultimi 500 messaggi)
+        
         echo "--- LOG JOURNAL (LAST 500) ---" > "{{ log_dest }}/target_journal_last500.txt"
         chroot "{{ mount_point }}" journalctl -r -n 500 --no-pager >> "{{ log_dest }}/target_journal_last500.txt" 2>&1
-
-        # 3. Verifica Spazio Disco (DF -h)
+        
         echo -e "\n--- RAPPORTO UTILIZZO DISCO (df -h) ---" > "{{ log_dest }}/target_disk_usage.txt"
         chroot "{{ mount_point }}" df -h >> "{{ log_dest }}/target_disk_usage.txt" 2>&1
 
-        # 4. Copia Log Syslog (se esistente)
-        cp "{{ mount_point }}/var/log/syslog" "{{ log_dest }}/target_syslog_copy" || true
-
-        # 5. Pulizia Bind Mounts
         umount "{{ mount_point }}/sys"
         umount "{{ mount_point }}/proc"
       args:
         executable: /bin/bash
       register: diagnostics_output
       ignore_errors: yes
-      
-    # --- TASK FINALI ---
 
     - name: Unmount target partition
       ansible.posix.mount:
