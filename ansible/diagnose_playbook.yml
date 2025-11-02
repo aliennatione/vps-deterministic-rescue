@@ -1,5 +1,5 @@
 ---
-- name: 1. VPS Diagnostica – Acquisizione Log Non Distruttiva
+- name: 1. VPS Diagnostica – Acquisizione Log e Stato Disco Non Distruttiva
   hosts: vps
   become: true
 
@@ -10,7 +10,7 @@
     # Genera un nome di directory univoco e sicuro
     log_dir_name: "logs_{{ ansible_date_time.iso8601_basic | replace('T', '-') | replace(':', '-') | replace('Z', '') }}"
     # Log temporaneo su /tmp della Live ISO
-    log_dest: "/tmp/{{ log_dir_name }}" 
+    log_dest: "/tmp/{{ log_dir_name }}"
 
   tasks:
     - name: Create temporary mount point directory on Live ISO
@@ -25,7 +25,7 @@
         src: "{{ target_partition }}"
         fstype: auto
         # Montaggio in sola lettura
-        opts: ro 
+        opts: ro
         state: mounted
 
     - name: Create log destination directory on Live ISO's /tmp
@@ -33,38 +33,46 @@
         path: "{{ log_dest }}"
         state: directory
         mode: '0755'
+    
+    # --- TASK DI ANALISI AVANZATA (Journal + Stato Disco) ---
 
-    - name: Copy target system's recent syslog (Robust copy using shell)
-      # Usiamo 'shell' per garantire che 'cp' funzioni sia in locale che in remoto
+    - name: Run complex diagnostic steps (Journal, Disk Check, Bind Mounts)
       ansible.builtin.shell: |
-        cp "{{ mount_point }}/var/log/syslog" "{{ log_dest }}/target_syslog_copy"
-      ignore_errors: yes
-
-    - name: Copy target system's last 500 journal entries (via chroot shell for robust access)
-      ansible.builtin.shell: |
-        # Disattiva l'uscita in caso di errore per i comandi shell interni
+        # Attiva la modalità resiliente: set +e
         set +e
 
-        # Bind mount di /proc e /sys necessari per chroot e journalctl
+        # 1. Preparazione dell'ambiente chroot
+        # Il kernel ha bisogno di /proc e /sys per journalctl e df
         mkdir -p "{{ mount_point }}/proc" "{{ mount_point }}/sys"
         mount -o bind /proc "{{ mount_point }}/proc"
         mount -o bind /sys "{{ mount_point }}/sys"
 
-        # Esegue journalctl nell'ambiente chroot e reindirizza l'output sulla Live ISO
-        chroot "{{ mount_point }}" journalctl -r -n 500 --no-pager > "{{ log_dest }}/target_journal_last500.txt" 2>&1
+        # 2. Acquisizione Log Journal (Ultimi 500 messaggi)
+        echo "--- LOG JOURNAL (LAST 500) ---" > "{{ log_dest }}/target_journal_last500.txt"
+        chroot "{{ mount_point }}" journalctl -r -n 500 --no-pager >> "{{ log_dest }}/target_journal_last500.txt" 2>&1
 
-        # Smonta i bind mount
+        # 3. Verifica Spazio Disco (DF -h)
+        echo -e "\n--- RAPPORTO UTILIZZO DISCO (df -h) ---" > "{{ log_dest }}/target_disk_usage.txt"
+        chroot "{{ mount_point }}" df -h >> "{{ log_dest }}/target_disk_usage.txt" 2>&1
+
+        # 4. Copia Log Syslog (se esistente)
+        cp "{{ mount_point }}/var/log/syslog" "{{ log_dest }}/target_syslog_copy" || true
+
+        # 5. Pulizia Bind Mounts
         umount "{{ mount_point }}/sys"
         umount "{{ mount_point }}/proc"
       args:
         executable: /bin/bash
+      register: diagnostics_output
       ignore_errors: yes
+      
+    # --- TASK FINALI ---
 
     - name: Unmount target partition
       ansible.posix.mount:
         path: "{{ mount_point }}"
         state: absent
 
-    - name: Print log destination path
+    - name: Print log destination path and Disk Check status
       ansible.builtin.debug:
-        msg: "✅ Diagnostica completata. Logs salvati su Live ISO in: {{ log_dest }}. **ANALIZZA** questi file prima di procedere alla Fase 2."
+        msg: "✅ Diagnostica completata. Logs e stato disco salvati su Live ISO in: {{ log_dest }}. Ora scarica i file (target_journal_last500.txt e target_disk_usage.txt) per l'analisi."
