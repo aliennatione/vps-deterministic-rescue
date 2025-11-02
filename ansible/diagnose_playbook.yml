@@ -11,8 +11,11 @@
     log_dir_name: "logs_{{ ansible_date_time.iso8601_basic | replace('T', '-') | replace(':', '-') | replace('Z', '') }}"
     # Log temporaneo su /tmp della Live ISO
     log_dest: "/tmp/{{ log_dir_name }}"
+    # Directory di download locale sul Control Node
+    local_download_dir: "./vps_diagnostics_output/{{ log_dir_name }}"
 
   tasks:
+    # 1. SETUP
     - name: Create temporary mount point directory on Live ISO
       ansible.builtin.file:
         path: "{{ mount_point }}"
@@ -33,35 +36,41 @@
         state: directory
         mode: '0755'
 
-    - name: Copy target system's recent syslog (Robust copy using shell)
-      ansible.builtin.shell: cp "{{ mount_point }}/var/log/syslog" "{{ log_dest }}/target_syslog_copy" || true
-      ignore_errors: yes
-
+    # 2. RUN DIAGNOSTICS (Journal, Disk Check, Bind Mounts)
     - name: Run complex diagnostic steps (Journal, Disk Check, Bind Mounts)
       ansible.builtin.shell: |
         set +e
         mkdir -p "{{ mount_point }}/proc" "{{ mount_point }}/sys"
         mount -o bind /proc "{{ mount_point }}/proc"
         mount -o bind /sys "{{ mount_point }}/sys"
-        
+
         echo "--- LOG JOURNAL (LAST 500) ---" > "{{ log_dest }}/target_journal_last500.txt"
         chroot "{{ mount_point }}" journalctl -r -n 500 --no-pager >> "{{ log_dest }}/target_journal_last500.txt" 2>&1
         
         echo -e "\n--- RAPPORTO UTILIZZO DISCO (df -h) ---" > "{{ log_dest }}/target_disk_usage.txt"
         chroot "{{ mount_point }}" df -h >> "{{ log_dest }}/target_disk_usage.txt" 2>&1
 
+        # Rimosso il task di copia syslog. La logica è stata spostata qui per essere più snella.
+        cp "{{ mount_point }}/var/log/syslog" "{{ log_dest }}/target_syslog_copy" || true
+
         umount "{{ mount_point }}/sys"
         umount "{{ mount_point }}/proc"
       args:
         executable: /bin/bash
-      register: diagnostics_output
       ignore_errors: yes
 
+    # 3. CLEANUP AND DOWNLOAD (AUTOMATIC)
     - name: Unmount target partition
       ansible.posix.mount:
         path: "{{ mount_point }}"
         state: absent
 
-    - name: Print log destination path and Disk Check status
+    - name: Download all log files to Control Node
+      ansible.builtin.fetch:
+        src: "{{ log_dest }}"
+        dest: "{{ local_download_dir }}"
+        flat: yes
+
+    - name: Print success message with local download path
       ansible.builtin.debug:
-        msg: "✅ Diagnostica completata. Logs e stato disco salvati su Live ISO in: {{ log_dest }}. Ora scarica i file (target_journal_last500.txt e target_disk_usage.txt) per l'analisi."
+        msg: "✅ DIAGNOSTICA COMPLETATA. Log e stato disco scaricati sul Control Node in: {{ local_download_dir }}/{{ inventory_hostname }}"
