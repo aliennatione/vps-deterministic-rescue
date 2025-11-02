@@ -1,1 +1,83 @@
-```yaml
+---
+- name: 2. VPS Ripristino – Risoluzione Determinata e Granulare
+  hosts: vps
+  become: true
+  vars_files:
+    - group_vars/all.yml
+  
+  tasks:
+    - name: Safety Pause: Confirm analysis done
+      ansible.builtin.pause:
+        prompt: "Hai analizzato i log? Il servizio da disabilitare è impostato su '{{ service_to_disable }}'? Continuare con le modifiche al disco? (y/N)"
+        default: "N"
+        private: false
+      register: confirmation
+      when: service_to_disable is defined
+
+    - name: Exit if confirmation denied
+      ansible.builtin.meta: end_play
+      when: confirmation.user_input | lower != 'y'
+
+    # --- SETUP INIZIALE (ALWAYS TAG) ---
+    - name: Mount target partition READ-WRITE
+      ansible.posix.mount:
+        path: "{{ mount_point }}"
+        src: "{{ target_partition }}"
+        fstype: auto
+        state: mounted
+      tags: [mount, always]
+
+    - name: Bind /dev, /proc, /sys for chroot operation
+      ansible.builtin.shell: |
+        for i in /dev /dev/pts /proc /sys; do mount -B $i {{ mount_point }}$i; done
+      args:
+        executable: /bin/bash
+      tags: [mount, always]
+
+    # --- AZIONI CORRETTIVE SELEZIONABILI TRAMITE TAG ---
+
+    - name: Run filesystem check (fsck)
+      ansible.builtin.command: fsck -y {{ target_partition }}
+      ignore_errors: yes
+      when: ansible_connection == 'local' # fsck su partizione smontata funziona bene solo in locale
+      tags: [fsck]
+
+    - name: Chroot and remove large logs/cache (>10MB)
+      ansible.builtin.shell: chroot {{ mount_point }} find /var/log/ -name "*.log" -type f -size +10M -delete
+      ignore_errors: yes
+      tags: [cleanup]
+
+    - name: Chroot and disable problematic service ({{ service_to_disable }})
+      ansible.builtin.command: chroot {{ mount_point }} /bin/systemctl disable {{ service_to_disable }}
+      ignore_errors: yes
+      tags: [disable_service]
+
+    - name: Chroot and mask problematic service (prevents manual starting)
+      ansible.builtin.command: chroot {{ mount_point }} /bin/systemctl mask {{ service_to_disable }}
+      ignore_errors: yes
+      tags: [disable_service]
+      
+    - name: Chroot and update grub (bootloader safety)
+      ansible.builtin.command: chroot {{ mount_point }} /usr/sbin/update-grub
+      ignore_errors: yes
+      tags: [grub]
+
+    # --- PULIZIA FINALE (ALWAYS TAG) ---
+    - name: Unmount binds /sys, /proc, /dev from chroot environment
+      ansible.builtin.shell: |
+        for i in /sys /proc /dev/pts /dev; do umount {{ mount_point }}$i; done
+      args:
+        executable: /bin/bash
+      ignore_errors: yes
+      tags: [unmount, always]
+
+    - name: Final unmount of target partition
+      ansible.posix.mount:
+        path: "{{ mount_point }}"
+        state: absent
+      tags: [unmount, always]
+
+    - name: Print completion message
+      ansible.builtin.debug:
+        msg: "🎉 Ripristino completato. Rimuovi la Live ISO dal pannello del provider e riavvia il VPS."
+      tags: [always]

@@ -1,1 +1,59 @@
-```yaml
+---
+- name: 1. VPS Diagnostica – Acquisizione Log Non Distruttiva
+  hosts: vps
+  become: true
+  vars_files:
+    - group_vars/all.yml
+  vars:
+    log_dir_name: logs_{{ ansible_date_time.iso8601_basic | replace('T', '-') | replace(':', '-') | replace('Z', '') }}
+    log_dest: /tmp/{{ log_dir_name }} # Log temporaneo su /tmp della Live ISO
+  
+  tasks:
+    - name: Create temporary mount point directory on Live ISO
+      ansible.builtin.file:
+        path: "{{ mount_point }}"
+        state: directory
+        mode: '0755'
+
+    - name: Mount target partition READONLY (Safety Check)
+      ansible.posix.mount:
+        path: "{{ mount_point }}"
+        src: "{{ target_partition }}"
+        fstype: auto
+        opts: ro
+        state: mounted
+
+    - name: Create log destination directory on Live ISO's /tmp
+      ansible.builtin.file:
+        path: "{{ log_dest }}"
+        state: directory
+        mode: '0755'
+
+    - name: Copy target system's recent syslog (if file-based logging is used)
+      ansible.builtin.copy:
+        src: "{{ mount_point }}/var/log/syslog"
+        dest: "{{ log_dest }}/target_syslog_copy"
+      ignore_errors: yes
+
+    - name: Copy target system's last 500 journal entries (via chroot shell for safe access)
+      ansible.builtin.shell: |
+        set +e
+        mkdir -p {{ mount_point }}/proc {{ mount_point }}/sys
+        mount -o bind /proc {{ mount_point }}/proc
+        mount -o bind /sys {{ mount_point }}/sys
+        # Esegue journalctl nell'ambiente chroot e salva l'output sulla Live ISO
+        chroot {{ mount_point }} journalctl -r -n 500 --no-pager > {{ log_dest }}/target_journal_last500.txt 2>&1
+        umount {{ mount_point }}/proc
+        umount {{ mount_point }}/sys
+      args:
+        executable: /bin/bash
+      ignore_errors: yes
+
+    - name: Unmount target partition
+      ansible.posix.mount:
+        path: "{{ mount_point }}"
+        state: absent
+
+    - name: Print log destination path
+      ansible.builtin.debug:
+        msg: "✅ Diagnostica completata. Logs salvati su Live ISO in: {{ log_dest }}. **ANALIZZA** questi file prima di procedere alla Fase 2."
