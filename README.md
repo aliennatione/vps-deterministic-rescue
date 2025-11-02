@@ -57,8 +57,8 @@ Montare la partizione VPS in sola lettura, copiare i log recenti (`syslog`, `jou
 
 **Comando di Esecuzione (Esempio Remoto):**
 ```bash
-ansible-playbook -i ansible/hosts_remote.ini ansible/diagnose_playbook.yml
-````
+ansible-playbook -i ansible/hosts_remote.ini ansible/diagnose_playbook.yml --ask-become-pass
+```
 
 **Output Cruciale:**
 La console indicherà il percorso esatto (es. `/tmp/logs_<timestamp>`) dove i log sono stati salvati.
