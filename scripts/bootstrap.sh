@@ -5,7 +5,7 @@ set -e
 
 USERNAME="tempuser"
 # Password temporanea utilizzata da Ansible.
-PASSWORD="TempPassGenerataEZ89!" 
+PASSWORD="${BOOTSTRAP_PASSWORD}"
 
 echo "========================================"
 echo "== VPS RESCUE BOOTSTRAP: Accesso Remoto =="
