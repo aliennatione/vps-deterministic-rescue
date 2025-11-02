@@ -41,18 +41,22 @@
       ansible.builtin.shell: |
         # Disattiva l'uscita in caso di errore per i comandi shell interni
         set +e
+    
         # Bind mount di /proc e /sys necessari per chroot e journalctl
-        mkdir -p {{ mount_point }}/proc {{ mount_point }}/sys
-        mount -o bind /proc {{ mount_point }}/proc
-        mount -o bind /sys {{ mount_point }}/sys
+        mkdir -p "{{ mount_point }}/proc" "{{ mount_point }}/sys"
+        mount -o bind /proc "{{ mount_point }}/proc"
+        mount -o bind /sys "{{ mount_point }}/sys"
+    
         # Esegue journalctl nell'ambiente chroot e reindirizza l'output sulla Live ISO
-        chroot {{ mount_point }} journalctl -r -n 500 --no-pager > {{ log_dest }}/target_journal_last500.txt 2>&1
+        chroot "{{ mount_point }}" journalctl -r -n 500 --no-pager > "{{ log_dest }}/target_journal_last500.txt" 2>&1
+    
         # Smonta i bind mount
-        umount {{ mount_point }}/sys
-        umount {{ mount_point }}/proc
+        umount "{{ mount_point }}/sys"
+        umount "{{ mount_point }}/proc"
       args:
         executable: /bin/bash
       ignore_errors: yes
+
 
     - name: Unmount target partition
       ansible.posix.mount:
