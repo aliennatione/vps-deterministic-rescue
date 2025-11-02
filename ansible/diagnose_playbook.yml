@@ -2,14 +2,16 @@
 - name: 1. VPS Diagnostica – Acquisizione Log Non Distruttiva
   hosts: vps
   become: true
+
   vars_files:
     - group_vars/all.yml
+
   vars:
     # Genera un nome di directory univoco e sicuro
-    log_dir_name: logs_{{ ansible_date_time.iso8601_basic | replace('T', '-') | replace(':', '-') | replace('Z', '') }}
+    log_dir_name: "logs_{{ ansible_date_time.iso8601_basic | replace('T', '-') | replace(':', '-') | replace('Z', '') }}"
     # Log temporaneo su /tmp della Live ISO
-    log_dest: /tmp/{{ log_dir_name }} 
-  
+    log_dest: "/tmp/{{ log_dir_name }}" 
+
   tasks:
     - name: Create temporary mount point directory on Live ISO
       ansible.builtin.file:
@@ -34,29 +36,29 @@
 
     - name: Copy target system's recent syslog (Robust copy using shell)
       # Usiamo 'shell' per garantire che 'cp' funzioni sia in locale che in remoto
-      ansible.builtin.shell: cp {{ mount_point }}/var/log/syslog {{ log_dest }}/target_syslog_copy
+      ansible.builtin.shell: |
+        cp "{{ mount_point }}/var/log/syslog" "{{ log_dest }}/target_syslog_copy"
       ignore_errors: yes
 
     - name: Copy target system's last 500 journal entries (via chroot shell for robust access)
       ansible.builtin.shell: |
         # Disattiva l'uscita in caso di errore per i comandi shell interni
         set +e
-    
+
         # Bind mount di /proc e /sys necessari per chroot e journalctl
         mkdir -p "{{ mount_point }}/proc" "{{ mount_point }}/sys"
         mount -o bind /proc "{{ mount_point }}/proc"
         mount -o bind /sys "{{ mount_point }}/sys"
-    
+
         # Esegue journalctl nell'ambiente chroot e reindirizza l'output sulla Live ISO
         chroot "{{ mount_point }}" journalctl -r -n 500 --no-pager > "{{ log_dest }}/target_journal_last500.txt" 2>&1
-    
+
         # Smonta i bind mount
         umount "{{ mount_point }}/sys"
         umount "{{ mount_point }}/proc"
       args:
         executable: /bin/bash
       ignore_errors: yes
-
 
     - name: Unmount target partition
       ansible.posix.mount:
