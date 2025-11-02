@@ -1,0 +1,5 @@
+# File temporanei
+*.retry
+
+# Configurazione locale e sensibile
+.env
