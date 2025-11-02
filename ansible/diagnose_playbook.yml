@@ -11,6 +11,8 @@
     log_dir_name: "logs_{{ ansible_date_time.iso8601_basic | replace('T', '-') | replace(':', '-') | replace('Z', '') }}"
     # Log temporaneo su /tmp della Live ISO
     log_dest: "/tmp/{{ log_dir_name }}"
+    # Nome del file tar.gz da creare sul remoto
+    tar_file_remote: "/tmp/{{ log_dir_name }}.tar.gz"
     # Directory di download locale sul Control Node
     local_download_dir: "./vps_diagnostics_output/{{ log_dir_name }}"
 
@@ -36,7 +38,7 @@
         state: directory
         mode: '0755'
 
-    # 2. RUN DIAGNOSTICS (Journal, Disk Check, Bind Mounts)
+    # 2. RUN DIAGNOSTICS
     - name: Run complex diagnostic steps (Journal, Disk Check, Bind Mounts)
       ansible.builtin.shell: |
         set +e
@@ -50,7 +52,6 @@
         echo -e "\n--- RAPPORTO UTILIZZO DISCO (df -h) ---" > "{{ log_dest }}/target_disk_usage.txt"
         chroot "{{ mount_point }}" df -h >> "{{ log_dest }}/target_disk_usage.txt" 2>&1
 
-        # Rimosso il task di copia syslog. La logica è stata spostata qui per essere più snella.
         cp "{{ mount_point }}/var/log/syslog" "{{ log_dest }}/target_syslog_copy" || true
 
         umount "{{ mount_point }}/sys"
@@ -59,18 +60,34 @@
         executable: /bin/bash
       ignore_errors: yes
 
-    # 3. CLEANUP AND DOWNLOAD (AUTOMATIC)
+    # 3. CLEANUP AND DOWNLOAD
     - name: Unmount target partition
       ansible.posix.mount:
         path: "{{ mount_point }}"
         state: absent
 
-    - name: Download all log files to Control Node
+    - name: Archive log directory before download
+      ansible.builtin.shell: tar czf "{{ tar_file_remote }}" -C /tmp "{{ log_dir_name }}"
+
+    - name: Download log archive to Control Node
+      # Scarica il file .tar.gz
       ansible.builtin.fetch:
-        src: "{{ log_dest }}"
-        dest: "{{ local_download_dir }}"
+        src: "{{ tar_file_remote }}"
+        dest: "{{ local_download_dir }}/"
         flat: yes
+      register: fetch_result
+
+    - name: Extract log archive on Control Node
+      # Esegue il comando di estrazione *localmente* sul Control Node
+      ansible.builtin.unarchive:
+        src: "{{ fetch_result.dest }}"
+        dest: "{{ local_download_dir }}/{{ inventory_hostname }}"
+        remote_src: no # Indica che l'estrazione avviene in locale
+        extra_opts:
+          - '--strip-components=1'
+      delegate_to: localhost
+      when: fetch_result.changed
 
     - name: Print success message with local download path
       ansible.builtin.debug:
-        msg: "✅ DIAGNOSTICA COMPLETATA. Log e stato disco scaricati sul Control Node in: {{ local_download_dir }}/{{ inventory_hostname }}"
+        msg: "✅ DIAGNOSTICA COMPLETATA. Log scaricati ed estratti sul Control Node in: {{ local_download_dir }}/{{ inventory_hostname }}/"
