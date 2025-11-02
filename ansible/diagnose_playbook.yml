@@ -1,20 +1,16 @@
 ---
 - name: 1. VPS Diagnostica – Acquisizione Log e Stato Disco Non Distruttiva
   hosts: vps
-  become: true
+  become: true # Become abilitato per i task sul VPS Live
 
   vars_files:
     - group_vars/all.yml
 
   vars:
-    # Genera un nome di directory univoco e sicuro
     log_dir_name: "logs_{{ ansible_date_time.iso8601_basic | replace('T', '-') | replace(':', '-') | replace('Z', '') }}"
-    # Log temporaneo su /tmp della Live ISO
     log_dest: "/tmp/{{ log_dir_name }}"
-    # Nome del file tar.gz da creare sul remoto
     tar_file_remote: "/tmp/{{ log_dir_name }}.tar.gz"
-    # Directory di download locale sul Control Node
-    local_download_dir: "./vps_diagnostics_output/{{ log_dir_name }}"
+    local_download_dir: "./vps_diagnostics_output" # Directory locale radice
 
   tasks:
     # 1. SETUP
@@ -70,7 +66,6 @@
       ansible.builtin.shell: tar czf "{{ tar_file_remote }}" -C /tmp "{{ log_dir_name }}"
 
     - name: Download log archive to Control Node
-      # Scarica il file .tar.gz
       ansible.builtin.fetch:
         src: "{{ tar_file_remote }}"
         dest: "{{ local_download_dir }}/"
@@ -78,16 +73,18 @@
       register: fetch_result
 
     - name: Extract log archive on Control Node
-      # Esegue il comando di estrazione *localmente* sul Control Node
       ansible.builtin.unarchive:
         src: "{{ fetch_result.dest }}"
-        dest: "{{ local_download_dir }}/{{ inventory_hostname }}"
-        remote_src: no # Indica che l'estrazione avviene in locale
+        # Decomprime nella sottodirectory specifica per l'esecuzione
+        dest: "{{ local_download_dir }}/{{ log_dir_name }}/" 
+        remote_src: no
         extra_opts:
           - '--strip-components=1'
       delegate_to: localhost
       when: fetch_result.changed
+      # DISABILITA SUDO solo per questo task LOCALE
+      become: false 
 
     - name: Print success message with local download path
       ansible.builtin.debug:
-        msg: "✅ DIAGNOSTICA COMPLETATA. Log scaricati ed estratti sul Control Node in: {{ local_download_dir }}/{{ inventory_hostname }}/"
+        msg: "✅ DIAGNOSTICA COMPLETATA. Log scaricati ed estratti sul Control Node in: {{ local_download_dir }}/{{ log_dir_name }}/{{ inventory_hostname }}/"
